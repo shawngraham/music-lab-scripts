@@ -1,7 +1,7 @@
 /*
  * Data-Driven DJ (https://datadrivendj.com)
  * Author: Brian Foo (http://brianfoo.com)
- * This is a visualization of the song "Rhapsody In Grey" (https://datadrivendj.com/tracks/brain)
+ * This is a visualization of the song "Rhapsody In Grey"
  */
  
 // output
@@ -42,7 +42,8 @@ float pointD = 10;
 float lineWeight = 1;
 float lineStartWeight = 2;
 float lineStopWeight = 0.05;
-float readingPadding = 60;
+float readingPadding = 40;
+boolean nakedMode = false;
 
 // text
 int fontSize = 18;
@@ -53,8 +54,8 @@ PFont font = createFont("OpenSans-Semibold", fontSize, true);
 float pixelsPerMs = 90.0 / 1000;
 float msBefore = markerX / pixelsPerMs;
 float msAfter = 1.0 * (canvasW - markerX - labelW) / pixelsPerMs;
-float startMs = 0; // 120000
-float stopMs = 280000; // 160000
+float startMs = 0;
+float stopMs = 224000;
 float elapsedMs = startMs;
 
 // scale
@@ -68,8 +69,24 @@ float scaleMarginY = 30;
 float scaleY = 1.0 * canvasH - scaleH - scaleMarginY;
 float scaleYRatio = 1;
 float scaleLineWeight = 1;
-float scaleFontSize = 16;
+int scaleFontSize = 16;
 PFont scaleFont = createFont("OpenSans-Regular", scaleFontSize, true);
+
+// status
+float statusMargin = 10;
+float statusW = 60;
+float statusH = 60;
+float statusX = statusW/2 + statusMargin;
+float statusY = statusH/2 + statusMargin;
+float statusTextW = statusW * 3 + statusMargin * 2;
+float statusTextH = 300;
+float statusTextX = statusMargin;
+float statusTextY = statusY + statusH/2 + statusMargin;
+int statusFontSize = 26;
+int statusFontLeading = statusFontSize + 4;
+PFont statusFont = createFont("OpenSans-Regular", statusFontSize, true);
+JSONArray eventsJSON;
+ArrayList<Event> events;
 
 void setup() {  
   // set the stage
@@ -77,6 +94,14 @@ void setup() {
   colorMode(RGB, 255, 255, 255, 100);
   frameRate(fps);
   smooth();
+  
+  // load status messages
+  eventsJSON = loadJSONArray("eeg_events.json");
+  events = new ArrayList<Event>(eventsJSON.size());
+  for (int i = 0; i < eventsJSON.size(); i++) {  
+    JSONObject event = eventsJSON.getJSONObject(i);
+    events.add(new Event(event.getFloat("start"), event.getFloat("duration"), event.getString("text")));
+  }
   
   // load data
   eegJSON = loadJSONArray("eeg.json");
@@ -102,7 +127,9 @@ void setup() {
   // calculate scale ratio
   scaleYRatio = (maxUV - minUV) / scaleYUnit;
   
-  // println(minUV, maxUV, scaleYRatio);
+  if (nakedMode) {
+    labelW = 0;
+  }
   
   // draw label bg
   noStroke();
@@ -115,16 +142,16 @@ void setup() {
   fill(textColor);
   
   // draw labels
-  float y = 0;
-  float x = canvasW - labelW + textIndent;
-  for (int i=1; i < labelsJSON.size(); i++) {
-    String label = labelsJSON.getString(i);
-    text(label, x, y, labelW - textIndent, labelH);
-    y += labelH;
+  if (!nakedMode) {
+    float y = 0;
+    float x = canvasW - labelW + textIndent;
+    for (int i=1; i < labelsJSON.size(); i++) {
+      String label = labelsJSON.getString(i);
+      text(label, x, y, labelW - textIndent, labelH);
+      y += labelH;
+    }
   }
   
-  // scale fonts
-  textFont(scaleFont, scaleFontSize);
   
   // noLoop();
 }
@@ -187,6 +214,10 @@ void draw(){
     float x1 = getVertexX(markerX, elapsedMs, r.getMs());
     float y1 = getVertexY(i, labelH, readingPadding, r.getValue());
     
+    if (nakedMode) {
+      lineColor = lineStartColor;
+    }
+    
     // loop through each point
     for(int j=1; j<line.size(); j++) {
       r = line.get(j);
@@ -204,8 +235,13 @@ void draw(){
       // if it's before the marker, reverse the gradient and keep a unified weight
       } else {
         float inter = 1.0 * x1 / markerX;
+        float lw = inter * (lineStartWeight - lineStopWeight) + lineStopWeight;
         color lc = lerpColor(lineStopColor, lineColor, inter);
-        strokeWeight(lineWeight);
+        if (nakedMode) {
+          strokeWeight(lw);
+        } else {
+          strokeWeight(lineWeight);
+        }        
         stroke(lc);
       }
       
@@ -215,30 +251,73 @@ void draw(){
     }
   }
   
-  // draw marker
-  noStroke();
-  fill(textColor, 30);
-  rect(markerX-markerW/2, 0, markerW, canvasH);
+  if (!nakedMode) {
   
-  // draw points
-  fill(pointColor);
-  for(int i=0; i<points.size(); i++) {
-    float y = getVertexY(i, labelH, readingPadding, points.get(i));
-    ellipse(markerX, y, pointD, pointD);
+    // draw marker
+    noStroke();
+    fill(textColor, 30);
+    rect(markerX-markerW/2, 0, markerW, canvasH);
+    
+    // draw points
+    fill(pointColor);
+    for(int i=0; i<points.size(); i++) {
+      float y = getVertexY(i, labelH, readingPadding, points.get(i));
+      ellipse(markerX, y, pointD, pointD);
+    }
+    
+    // draw scale
+    textFont(scaleFont, scaleFontSize);
+    strokeWeight(scaleLineWeight);
+    stroke(textColor);
+    fill(textColor);
+    line(scaleX, scaleY+scaleH, scaleX+scaleW, scaleY+scaleH); // x-axis
+    line(scaleX, scaleY, scaleX, scaleY+scaleH); // y-axis
+    String xlabel = Integer.toString(scaleXUnit) + " s";
+    String ylabel = Integer.toString(scaleYUnitDisplay) + " uV";
+    textAlign(CENTER, CENTER);
+    text(xlabel, scaleX, scaleY+scaleH-5, scaleW, scaleMarginY);
+    textAlign(LEFT, CENTER);
+    text(ylabel, scaleX + 5, scaleY + scaleH/2);
+  
   }
   
-  // draw scale
-  strokeWeight(scaleLineWeight);
-  stroke(textColor);
-  fill(textColor);
-  line(scaleX, scaleY+scaleH, scaleX+scaleW, scaleY+scaleH); // x-axis
-  line(scaleX, scaleY, scaleX, scaleY+scaleH); // y-axis
-  String xlabel = Integer.toString(scaleXUnit) + " s";
-  String ylabel = Integer.toString(scaleYUnitDisplay) + " uV";
-  textAlign(CENTER, CENTER);
-  text(xlabel, scaleX, scaleY+scaleH-5, scaleW, scaleMarginY);
-  textAlign(LEFT, CENTER);
-  text(ylabel, scaleX + 5, scaleY + scaleH/2);
+  // draw status
+  if (events.size() > 0 && !nakedMode) {
+    
+    // draw status arcs
+    noStroke();
+
+    float sx = statusX;
+    Event currentEvent = events.get(0);
+    boolean currentFound = false;
+    for(int i=0; i<events.size(); i++) {
+      Event e = events.get(i);
+      float percent = e.getPercent(elapsedMs);
+      // check for current event
+      if (percent >= 0 && percent < 1 && !currentFound) {
+        currentEvent = e;
+        currentFound = true;
+      }
+      // empty circle
+      fill(lineColor);
+      ellipse(sx, statusY, statusW, statusH);
+      // colored arc
+      fill(pointColor);
+      arc(sx, statusY, statusW, statusH, percent*2.0*PI - PI/2.0, 1.5*PI);
+      // increment
+      sx += (statusW + statusMargin);
+    }    
+    
+    // draw status text
+    textFont(statusFont, statusFontSize);
+    textLeading(statusFontLeading);
+    textAlign(CENTER, TOP);
+    fill(textColor);
+    text(currentEvent.getText(), statusTextX, statusTextY, statusTextW, statusTextH);
+    
+  }
+  
+  
   
   // increment time
   elapsedMs += (1.0/fps) * 1000;
@@ -293,5 +372,30 @@ class Reading
     return value;
   }
   
+}
+
+class Event
+{
+  float start, duration, end;
+  String text;
+  
+  Event (float _start, float _duration, String _text) {
+    start = _start;
+    end = start + _duration;
+    duration = _duration;
+    text = _text;
+  }
+  
+  float getPercent(float ms){
+    float percent = (ms - start) / duration;
+    
+    percent = min(1.0, max(0.0, percent));
+    
+    return percent;
+  }
+  
+  String getText(){
+    return text;
+  } 
 }
 
