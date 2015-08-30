@@ -1,7 +1,7 @@
 ##
 # TRACK 2
-# RHAPSODY IN GREY (datadrivendj.com/tracks/brain)
-# Brian Foo (brianfoo.com)
+# RHAPSODY IN GREY
+# From Data-Driven DJ (datadrivendj.com) by Brian Foo (brianfoo.com)
 # This file builds the sequence file for use with ChucK from the data supplied
 ##
 
@@ -17,6 +17,11 @@ BPM = 75 # Beats per minute, e.g. 60, 75, 100, 120, 150
 DIVISIONS_PER_BEAT = 16 # e.g. 4 = quarter notes, 8 = eighth notes, etc
 VARIANCE_MS = 10 # +/- milliseconds an instrument note should be off by to give it a little more "natural" feel
 PRECISION = 6 # decimal places after 0 for reading value
+GAIN = 0.2 # base gain
+TEMPO = 0.25 # base tempo
+LABELS = ['Time', 'FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 'FP1-F3', 'F3-C3', 'C3-P3', 'P3-O1', 'FP2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'FP2-F8', 'F8-T8', 'T8-P8', 'P8-O2', 'FZ-CZ', 'CZ-PZ']
+
+# Files
 INSTRUMENTS_INPUT_FILE = 'data/instruments.csv'
 EEG_INPUT_FILE = 'data/eeg.csv'
 REPORT_SUMMARY_OUTPUT_FILE = 'data/report_summary.csv'
@@ -26,10 +31,11 @@ INSTRUMENTS_OUTPUT_FILE = 'data/ck_instruments.csv'
 SEQUENCE_OUTPUT_FILE = 'data/ck_sequence.csv'
 VISUALIZATION_OUTPUT_FILE = 'visualization/data/eeg.json'
 INSTRUMENTS_DIR = 'instruments/'
+
+# Output options
 WRITE_SEQUENCE = True
-WRITE_REPORT = False
+WRITE_REPORT = True
 WRITE_JSON = False
-LABELS = ['Time', 'FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 'FP1-F3', 'F3-C3', 'C3-P3', 'P3-O1', 'FP2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'FP2-F8', 'F8-T8', 'T8-P8', 'P8-O2', 'FZ-CZ', 'CZ-PZ']
 
 # Calculations
 BEAT_MS = round(60.0 / BPM * 1000)
@@ -99,36 +105,32 @@ def findInList(list, key, value):
 			break
 	return found
 
+# round {n} to nearest {nearest}
 def roundToNearest(n, nearest):
 	return 1.0 * round(1.0*n/nearest) * nearest
-
+	
 # Read instruments from file
 with open(INSTRUMENTS_INPUT_FILE, 'rb') as f:
 	r = csv.reader(f, delimiter='\t')
 	next(r, None) # remove header
-	for name,channel,variance_min,variance_max,variance2_min,variance2_max,wavelength_min,wavelength_max,file,from_gain,to_gain,from_tempo,to_tempo,gain_phase,tempo_phase,tempo_offset,interval_phase,interval,interval_offset,active in r:
-		if file and int(active):
+	for name,channel,amp_min,amp_max,freq_min,freq_max,sync_min,sync_max,file,from_gain,to_gain,tempo,tempo_offset,interval_phase,interval,interval_offset,active in r:
+		if int(active):
 			index = len(instruments)
 			# build instrument object
 			instrument = {
 				'index': index,
 				'name': name,
 				'channel': channel,
-				'variance_min': float(variance_min),
-				'variance_max': float(variance_max),
-				'variance2_min': float(variance2_min),
-				'variance2_max': float(variance2_max),
-				'wavelength_min': float(wavelength_min),
-				'wavelength_max': float(wavelength_max),
+				'amp_min': float(amp_min),
+				'amp_max': float(amp_max),
+				'freq_min': float(freq_min),
+				'freq_max': float(freq_max),
+				'sync_min': float(sync_min),
+				'sync_max': float(sync_max),
 				'file': INSTRUMENTS_DIR + file,
-				'from_gain': round(float(from_gain), 2),
-				'to_gain': round(float(to_gain), 2),
-				'from_tempo': float(from_tempo),
-				'to_tempo': float(to_tempo),
-				'gain_phase': int(gain_phase),
-				'tempo_phase': int(tempo_phase),
-				'from_beat_ms': int(round(BEAT_MS/float(from_tempo))),
-				'to_beat_ms': int(round(BEAT_MS/float(to_tempo))),
+				'from_gain': float(from_gain),
+				'to_gain': float(to_gain),
+				'tempo': float(tempo),
 				'tempo_offset': float(tempo_offset),
 				'interval_ms': int(int(interval_phase)*BEAT_MS),
 				'interval': int(interval),
@@ -149,32 +151,19 @@ def normalizeRow(row, min_value, max_value):
 			normalized_row.append(col)
 	return normalized_row
 
-def getWavelength(data, _min, _max, _stdev):
-	waves = []
-	start = -1
-	bottom_found = False
-	end = -1
-	data_len = len(data)
-	for index, value in enumerate(data):
-		# Look for the first peak
-		if value > (_max-_stdev) and start < 0:
-			start = index
-		# Look for the bottom crest
-		elif value < (_min+_stdev) and start >= 0 and not bottom_found and end < 0:
-			bottom_found = True
-		# Look for second peak
-		elif bottom_found and value > (_max-_stdev) and end < 0:
-			end = index
-			# Add wave to list and reset
-			waves.append(1.0 * (end - start) / data_len)
-			start = -1
-			bottom_found = False
-			end = -1
-	# wave(s) found, return average length
-	if len(waves) > 0:
-		return mean(waves)
-	else:
-		return -1
+# Count the number of waves in a given list of values
+def getFrequency(data, _min, _max, _stdev):
+	waves = 0.0
+	threshold = _stdev / 2.0
+	last_peak_value = None
+	for i, value in enumerate(data):
+		if i > 0 and i < len(data)-1:
+			# Look for a peak that has a value that is more than a {threshold} than the last peak value
+			if (value > data[i-1] and value > data[i+1] or value < data[i-1] and value < data[i+1]) and (last_peak_value is None or abs(value-last_peak_value) > threshold):
+				last_peak_value = value
+				waves += 1
+	# wave(s) found
+	return waves
 
 # Read eeg from file
 with open(EEG_INPUT_FILE, 'rb') as f:
@@ -224,21 +213,23 @@ print('uV range: ['+str(abs_min)+','+str(abs_max)+'], uV length: '+str(abs_max-a
 print(str(len(measures)) + ' total measures created, ' + str(MEASURE_MS) + 'ms each')
 		
 # Keep track of min/max stdev for normalization
-min_stdev = 0
-max_stdev = 0
-min_mean_stdev = 0
-max_mean_stdev = 0
-min_stdev2 = 0
-max_stdev2 = 0
-min_wavelength = 0
-max_wavelength = 0
+min_amp = None
+max_amp = None
+min_mean_amp = None
+max_mean_amp = None
+min_freq = None
+max_freq = None
+min_mean_freq = None
+max_mean_freq = None
+min_sync = None
+max_sync = None
 			
 # Go through each measure
 for mindex, measure in enumerate(measures):
 	channels = []
-	stdevs = []
+	amps = []
 	maxs = []
-	wavelengths = []
+	freqs = []
 	# Create an array of channel-value arrays
 	for channel in range(CHANNEL_COUNT):
 		channels.append([])
@@ -247,80 +238,87 @@ for mindex, measure in enumerate(measures):
 			channels[channel].append(value)
 	# For each channel
 	for cindex, channel in enumerate(channels):
-		# Calculate stdev, min/max, wavelength
+		# Calculate stdev, min/max, freq
 		_stdev = stdev(channel)
 		_min = min(channel)
 		_max = max(channel)
-		_wavelength = getWavelength(channel, _min, _max, _stdev)
-		stdevs.append(_stdev)
-		maxs.append(_max)
-		if _wavelength >= 0:
-			wavelengths.append(_wavelength)
-			# Keep track of max/mins
-			if _wavelength > max_wavelength:
-				max_wavelength = _wavelength
-			if _wavelength < min_wavelength or min_wavelength==0:
-				min_wavelength = _wavelength
-		if _stdev > max_stdev:
-			max_stdev = _stdev
-		if _stdev < min_stdev or min_stdev==0:
-			min_stdev = _stdev
+		_freq = getFrequency(channel, _min, _max, _stdev)
+		amps.append(_stdev)
+		freqs.append(_freq)
+		maxs.append(_max)		
+		# Keep track of max/mins
+		if _stdev > max_amp or max_amp is None:
+			max_amp = _stdev
+		if _stdev < min_amp or min_amp is None:
+			min_amp = _stdev
+		if _freq > max_freq or max_freq is None:
+			max_freq = _freq
+		if _freq < min_freq or min_freq is None:
+			min_freq = _freq		
 		# Add to channel list to measure
 		measures[mindex]["channels"].append({
 			"index": cindex + 1,
 			"name": LABELS[cindex + 1],
-			"stdev": _stdev,
+			"amp": _stdev,
 			"max": _max,
-			"wavelength": _wavelength
+			"freq": _freq
 		})
 	# Calculate max/means/stdevs
-	mean_stdev = mean(stdevs)
-	stdev_stdev = stdev(stdevs)
+	mean_amp = mean(amps)
+	sync = (stdev(amps) + stdev(freqs))/2.0
+	mean_freq = mean(freqs)
 	measures[mindex]["max"] = max(maxs)
-	measures[mindex]["mean_stdev"] = mean_stdev
-	measures[mindex]["mean_wavelength"] = mean(wavelengths)
-	measures[mindex]["stdev_stdev"] = stdev_stdev
+	measures[mindex]["mean_amp"] = mean_amp
+	measures[mindex]["mean_freq"] = mean_freq
+	measures[mindex]["sync"] = sync
 	# Keep track of min/max
-	if mean_stdev > max_mean_stdev:
-		max_mean_stdev = mean_stdev
-	if mean_stdev < min_mean_stdev or min_mean_stdev==0:
-		min_mean_stdev = mean_stdev
-	if stdev_stdev > max_stdev2:
-		max_stdev2 = stdev_stdev
-	if stdev_stdev < min_stdev2 or min_stdev2==0:
-		min_stdev2 = stdev_stdev
+	if mean_amp > max_mean_amp or max_mean_amp is None:
+		max_mean_amp = mean_amp
+	if mean_amp < min_mean_amp or min_mean_amp is None:
+		min_mean_amp = mean_amp
+	if mean_freq > max_mean_freq or max_mean_freq is None:
+		max_mean_freq = mean_freq
+	if mean_freq < min_mean_freq or min_mean_freq is None:
+		min_mean_freq = mean_freq
+	if sync > max_sync or max_sync is None:
+		max_sync = sync
+	if sync < min_sync or min_sync is None:
+		min_sync = sync
 
 # Normalize all values in measures
 for mindex, measure in enumerate(measures):
-	stdev_delta = max_stdev - min_stdev
-	stdev_mean_delta = max_mean_stdev - min_mean_stdev
-	stdev2_delta = max_stdev2 - min_stdev2
-	wavelength_delta = max_wavelength - min_wavelength
+	amp_delta = max_amp - min_amp
+	amp_mean_delta = max_mean_amp - min_mean_amp
+	freq_delta = max_freq - min_freq
+	freq_mean_delta = max_mean_freq - min_mean_freq
+	sync_delta = max_sync - min_sync	
 	# Normalize all values to between 0 and 1
-	measures[mindex]["mean_stdev"] = 1.0 * (measure["mean_stdev"]-min_mean_stdev) / stdev_mean_delta
-	measures[mindex]["stdev_stdev"] = 1.0 * (measure["stdev_stdev"]-min_stdev2) / stdev2_delta
-	measures[mindex]["mean_wavelength"] = 1.0 * (measure["mean_wavelength"]-min_wavelength) / wavelength_delta
+	measures[mindex]["mean_amp"] = 1.0 * (measure["mean_amp"]-min_mean_amp) / amp_mean_delta
+	measures[mindex]["mean_freq"] = 1.0 * (measure["mean_freq"]-min_mean_freq) / freq_mean_delta
+	measures[mindex]["sync"] = 1.0 - 1.0 * (measure["sync"]-min_sync) / sync_delta
+	# measures[mindex]["gain"] = measures[mindex]["mean_amp"] * (MAX_GAIN-MIN_GAIN) + MIN_GAIN
 	for cindex, channel in enumerate(measure["channels"]):
-		measures[mindex]["channels"][cindex]["stdev"] = 1.0 * (channel["stdev"]-min_stdev) / stdev_delta
-		if channel["wavelength"] >= 0:
-			measures[mindex]["channels"][cindex]["wavelength"] = 1.0 * (channel["wavelength"]-min_wavelength) / wavelength_delta
+		measures[mindex]["channels"][cindex]["amp"] = 1.0 * (channel["amp"]-min_amp) / amp_delta
+		measures[mindex]["channels"][cindex]["freq"] = 1.0 * (channel["freq"]-min_freq) / freq_delta
 
 # Returns list of valid instruments given measure data
 def getInstruments(_instruments, _measure):
 	valid_instruments = []
 	for instrument in _instruments:
-		if instrument["channel"]=="all" and _measure["mean_stdev"]>=instrument["variance_min"] and _measure["mean_stdev"]<instrument["variance_max"] and _measure["stdev_stdev"]>=instrument["variance2_min"] and _measure["stdev_stdev"]<instrument["variance2_max"]:
-			valid_instruments.append(instrument)
+		if instrument["channel"]=="all" and _measure["mean_amp"]>=instrument["amp_min"] and _measure["mean_amp"]<instrument["amp_max"] and _measure["mean_freq"]>=instrument["freq_min"] and _measure["mean_freq"]<instrument["freq_max"] and _measure["sync"]>=instrument["sync_min"] and _measure["sync"]<instrument["sync_max"]:
+			_instrument = instrument.copy()
+			valid_instruments.append(_instrument)
 	return valid_instruments
 
 # Returns list of valid instruments given channel data
 def getChannelInstruments(_instruments, _channel):
 	valid_instruments = []
 	for instrument in _instruments:
-		if instrument["channel"]==_channel["name"] and _channel["stdev"]>=instrument["variance_min"] and _channel["stdev"]<instrument["variance_max"] and _channel["wavelength"]>=instrument["wavelength_min"] and _channel["wavelength"]<instrument["wavelength_max"]:
-			valid_instruments.append(instrument)
+		if instrument["channel"]==_channel["name"] and _channel["amp"]>=instrument["amp_min"] and _channel["amp"]<instrument["amp_max"] and _channel["freq"]>=instrument["freq_min"] and _channel["freq"]<instrument["freq_max"]:
+			_instrument = instrument.copy()
+			valid_instruments.append(_instrument)
 	return valid_instruments
-		
+
 # Determine instruments
 for mindex, measure in enumerate(measures):
 	_instruments = []
@@ -330,9 +328,16 @@ for mindex, measure in enumerate(measures):
 		_instruments.extend(getChannelInstruments(instruments, channel))
 	measures[mindex]["instruments"] = _instruments
 
+# Return if the instrument should be played in the given interval
+def isValidInterval(instrument, elapsed_ms):
+	interval_ms = instrument['interval_ms']
+	interval = instrument['interval']
+	interval_offset = instrument['interval_offset']	
+	return int(math.floor(1.0*elapsed_ms/interval_ms)) % interval == interval_offset
+
 # Multiplier based on sine curve
 def getMultiplier(percent_complete):
-	radians = percent_complete * math.pi
+	radians = percent_complete * (math.pi / 2.0)
 	multiplier = math.sin(radians)
 	if multiplier < 0:
 		multiplier = 0.0
@@ -341,9 +346,8 @@ def getMultiplier(percent_complete):
 	return multiplier
 
 # Retrieve gain based on current beat
-def getGain(instrument, beat):
-	beats_per_phase = instrument['gain_phase']
-	percent_complete = float(beat % beats_per_phase) / beats_per_phase
+def getGain(instrument, total_ms, elapsed_ms):
+	percent_complete = elapsed_ms / total_ms
 	multiplier = getMultiplier(percent_complete)
 	from_gain = instrument['from_gain']
 	to_gain = instrument['to_gain']
@@ -351,78 +355,48 @@ def getGain(instrument, beat):
 	gain = multiplier * (to_gain - from_gain) + from_gain
 	gain = max(min_gain, round(gain, 2))
 	return gain
-
-# Get beat duration in ms based on current point in time
-def getBeatMs(instrument, beat, round_to):	
-	from_beat_ms = instrument['from_beat_ms']
-	to_beat_ms = instrument['to_beat_ms']
-	beats_per_phase = instrument['tempo_phase']
-	percent_complete = float(beat % beats_per_phase) / beats_per_phase
-	multiplier = getMultiplier(percent_complete)
-	ms = multiplier * (to_beat_ms - from_beat_ms) + from_beat_ms
-	ms = int(roundToNearest(ms, round_to))
-	return ms
-
-# Return if the instrument should be played in the given interval
-def isValidInterval(instrument, elapsed_ms):
-	interval_ms = instrument['interval_ms']
-	interval = instrument['interval']
-	interval_offset = instrument['interval_offset']	
-	return int(math.floor(1.0*elapsed_ms/interval_ms)) % interval == interval_offset
-
+	
 # Add beats to sequence
-def addBeatsToSequence(instrument, duration, ms, beat_ms, round_to):
+def addBeatsToSequence(_instrument, _duration, _ms, _beat_ms, _round_to):
 	global sequence
 	global hindex
-	offset_ms = int(instrument['tempo_offset'] * beat_ms)
-	ms += offset_ms
+	beat_ms = int(roundToNearest((1.0/_instrument['tempo']) * _beat_ms, _round_to))
+	offset_ms = int(_instrument['tempo_offset'] * beat_ms)
+	ms = _ms + offset_ms
 	previous_ms = int(ms)
-	from_beat_ms = instrument['from_beat_ms']
-	to_beat_ms = instrument['to_beat_ms']
-	min_ms = min(from_beat_ms, to_beat_ms)
-	remaining_duration = int(duration)
+	remaining_duration = int(_duration)
 	elapsed_duration = offset_ms
-	while remaining_duration >= min_ms:
+	while remaining_duration >= beat_ms:
 		elapsed_ms = int(ms)
 		elapsed_beat = int((elapsed_ms-previous_ms) / beat_ms)
-		this_beat_ms = getBeatMs(instrument, elapsed_beat, round_to)
 		# add to sequence if in valid interval
-		if isValidInterval(instrument, elapsed_ms):
+		if isValidInterval(_instrument, elapsed_ms):
 			h = halton(hindex, 3)
 			variance = int(h * VARIANCE_MS * 2 - VARIANCE_MS)
 			sequence.append({
-				'instrument_index': instrument['index'],
-				'instrument': instrument,
+				'instrument_index': _instrument['index'],
+				'instrument': _instrument,
 				'position': 0,
-				'gain': getGain(instrument, elapsed_beat),
+				'gain': getGain(_instrument, _duration, elapsed_ms),
 				'rate': 1,
-				'elapsed_ms': elapsed_ms + variance
+				'elapsed_ms': max([elapsed_ms + variance, 0])
 			})
 			hindex += 1
-		remaining_duration -= this_beat_ms
-		elapsed_duration += this_beat_ms
-		ms += this_beat_ms
+		remaining_duration -= beat_ms
+		elapsed_duration += beat_ms
+		ms += beat_ms
 
 # Build main sequence
-for instrument in instruments:
-	ms = 0
-	queue_duration = 0
-	# Each measure
-	for measure in measures:
-		# Check if instrument is in this measure
-		instrument_index = findInList(measure['instruments'], 'index', instrument['index'])
-		# Instrument not here, just add the measure duration and continue
-		if instrument_index < 0 and queue_duration > 0:
-			addBeatsToSequence(instrument, queue_duration, ms, BEAT_MS, ROUND_TO_NEAREST)
-			ms += queue_duration + measure['duration']
-			queue_duration = 0
-		elif instrument_index < 0:
-			ms += measure['duration']
-		else:
-			queue_duration += measure['duration']
-	if queue_duration > 0:
-		addBeatsToSequence(instrument, queue_duration, ms, BEAT_MS, ROUND_TO_NEAREST)
-		
+ms = 0
+for measure in measures:
+	# measure_gain = sum(instrument['gain'] for instrument in measure['instruments'])
+	for instrument in measure['instruments']:
+		instrument['from_gain'] = 1.0 * instrument['from_gain'] * GAIN
+		instrument['to_gain'] = 1.0 * instrument['to_gain'] * GAIN
+		instrument['tempo'] = 1.0 * instrument['tempo'] * TEMPO
+		addBeatsToSequence(instrument, measure['duration'], ms, BEAT_MS, ROUND_TO_NEAREST)
+	ms += measure['duration']
+
 # Calculate total time
 total_seconds = int(1.0*total_ms/1000)
 print('Total sequence time: '+time.strftime('%M:%S', time.gmtime(total_seconds)) + '(' + str(total_seconds) + 's)')
@@ -465,13 +439,13 @@ if WRITE_SEQUENCE and len(sequence) > 0:
 if WRITE_REPORT:
 	with open(REPORT_SUMMARY_OUTPUT_FILE, 'wb') as f:
 		w = csv.writer(f)
-		w.writerow(['Time', 'Mean-Stdev', 'Stdev-Stdev', 'Mean-Wavelength', 'Duration'])
+		w.writerow(['Time', 'Amplitude', 'Frequency', 'Synchrony', 'Duration'])
 		for mindex, measure in enumerate(measures):
 			elapsed = mindex * MEASURE_MS
 			elapsed_f = time.strftime('%M:%S', time.gmtime(int(elapsed/1000)))
 			ms = int(elapsed % 1000)
 			elapsed_f += '.' + str(ms)
-			w.writerow([elapsed_f, measure['mean_stdev'], measure['stdev_stdev'], measure['mean_wavelength'], int(measure['duration'])])
+			w.writerow([elapsed_f, measure['mean_amp'], measure['mean_freq'], measure['sync'], int(measure['duration'])])
 		print('Successfully wrote summary file: '+REPORT_SUMMARY_OUTPUT_FILE)
 	with open(REPORT_SUMMARY_CHANNEL_OUTPUT_FILE, 'wb') as f:
 		w = csv.writer(f)
@@ -483,7 +457,7 @@ if WRITE_REPORT:
 			elapsed_f += '.' + str(ms)
 			channels = [elapsed_f]
 			for channel in measure["channels"]:
-				channels.append(channel["stdev"])
+				channels.append(channel["amp"])
 			w.writerow(channels)
 		print('Successfully wrote channel summary file: '+REPORT_SUMMARY_CHANNEL_OUTPUT_FILE)
 
