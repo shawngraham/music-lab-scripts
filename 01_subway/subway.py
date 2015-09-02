@@ -15,13 +15,13 @@ import re
 import time
 
 # Config
-BPM = 120 # Beats per minute, e.g. 60, 75, 100, 120, 150
-METERS_PER_BEAT = 75 # Higher numbers creates shorter songs
+BPM = 100 # Beats per minute, e.g. 60, 75, 100, 120, 150
+METERS_PER_BEAT = 3000 # Higher numbers creates shorter songs
 DIVISIONS_PER_BEAT = 4 # e.g. 4 = quarter notes, 8 = eighth notes
-VARIANCE_MS = 20 # +/- milliseconds an instrument note should be off by to give it a little more "natural" feel
+VARIANCE_MS = 23 # +/- milliseconds an instrument note should be off by to give it a little more "natural" feel
 VARIANCE_RATE = 0 # for adding variance to the playback rate
 INSTRUMENTS_INPUT_FILE = 'data/instruments.csv'
-STATIONS_INPUT_FILE = 'data/stations.csv'
+STATIONS_INPUT_FILE = 'data/stations3.csv'
 REPORT_SUMMARY_OUTPUT_FILE = 'data/report_summary.csv'
 REPORT_SEQUENCE_OUTPUT_FILE = 'data/report_sequence.csv'
 INSTRUMENTS_OUTPUT_FILE = 'data/ck_instruments.csv'
